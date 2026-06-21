@@ -211,6 +211,8 @@
     color:var(--label-2);margin:22px 4px 8px;}
   textarea.token-input{width:100%;border:none;background:transparent;color:var(--label);
     font-size:12.5px;font-family:ui-monospace,Menlo,monospace;padding:14px 14px 4px;min-height:74px;resize:vertical;outline:none;}
+  .manual-search-input{width:100%;border:none;background:transparent;color:var(--label);
+    font-size:15px;font-family:inherit;padding:10px 4px;outline:none;}
   .token-footer{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 14px;
     border-top:0.5px solid var(--separator);}
   .status-pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;
@@ -302,6 +304,7 @@
     </div>
 
     <div id="scan-choices" style="display:none;"></div>
+    <div id="scan-manual" style="display:none;"></div>
     <div id="scan-result" style="display:none;"></div>
     <div id="scan-error" style="display:none;"></div>
   </div>
@@ -3356,13 +3359,77 @@ var qrcode = function() {
     wrap.querySelectorAll('.choice-row').forEach(row=>{
       row.addEventListener('click', ()=> finalizeChoice(results[parseInt(row.dataset.idx,10)]));
     });
-    document.getElementById('choicesNoneBtn').addEventListener('click', ()=>{
-      showScanState('error', { message: "Pas de souci — réessaie avec une photo plus nette ou sous un autre angle." });
-    });
+    document.getElementById('choicesNoneBtn').addEventListener('click', showManualSearch);
     setScanPanel('choices');
   }
 
-  async function finalizeChoice(result){
+  async function searchTaxa(query){
+    try{
+      const res = await fetch(`https://api.inaturalist.org/v1/taxa?q=${encodeURIComponent(query)}&locale=fr&per_page=8&is_active=true`);
+      if(!res.ok) return [];
+      const json = await res.json();
+      return json.results || [];
+    }catch(e){ console.warn('[manual] recherche exception', e); return []; }
+  }
+
+  function showManualSearch(){
+    const wrap = document.getElementById('scan-manual');
+    wrap.innerHTML = `
+      <button class="link-btn" id="manualBackBtn">← Revenir aux propositions</button>
+      <div class="choices-head">
+        <h2>Cherche le nom toi-même</h2>
+        <p>Tape un nom (français ou scientifique), même approximatif.</p>
+      </div>
+      <div class="grouped-card" style="padding:10px;">
+        <input type="text" id="manualSearchInput" class="manual-search-input" placeholder="Ex : yucca, mouton, coccinelle...">
+      </div>
+      <div id="manualResults"></div>
+    `;
+    setScanPanel('manual');
+    document.getElementById('manualBackBtn').addEventListener('click', ()=> setScanPanel('choices'));
+    const input = document.getElementById('manualSearchInput');
+    let debounceTimer = null;
+    input.addEventListener('input', ()=>{
+      clearTimeout(debounceTimer);
+      const q = input.value.trim();
+      if(q.length < 2){ document.getElementById('manualResults').innerHTML = ''; return; }
+      debounceTimer = setTimeout(async ()=>{
+        const taxa = await searchTaxa(q);
+        renderManualResults(taxa);
+      }, 400);
+    });
+    input.focus();
+  }
+
+  function renderManualResults(taxa){
+    const out = document.getElementById('manualResults');
+    if(!taxa.length){
+      out.innerHTML = `<p style="font-size:13px;color:var(--label-2);padding:14px 4px;">Aucun résultat pour cette recherche.</p>`;
+      return;
+    }
+    out.innerHTML = `<div class="grouped-card" style="margin-top:12px;">
+      ${taxa.map((t,i)=>{
+        const photo = t.default_photo && t.default_photo.square_url;
+        return `<button class="choice-row" data-idx="${i}">
+          ${photo
+            ? `<img class="choice-thumb" src="${photo}" alt="">`
+            : `<span class="choice-thumb"><span class="icon">${iconSvg(t.iconic_taxon_name)}</span></span>`}
+          <span class="choice-info">
+            <div class="cname">${escapeHtml(t.preferred_common_name || t.name)}</div>
+            <div class="sname">${escapeHtml(t.name)}</div>
+          </span>
+        </button>`;
+      }).join('')}
+    </div>`;
+    out.querySelectorAll('.choice-row').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const taxon = taxa[parseInt(row.dataset.idx,10)];
+        finalizeChoice({ taxon, combined_score: null }, true);
+      });
+    });
+  }
+
+  async function finalizeChoice(result, manual){
     setScanPanel('loading');
     const taxon = result.taxon;
     const details = await fetchTaxonDetails(taxon.id);
@@ -3377,6 +3444,7 @@ var qrcode = function() {
       commonName: taxon.preferred_common_name || (details && details.preferred_common_name) || taxon.name,
       iconic: taxon.iconic_taxon_name,
       score: result.combined_score,
+      manual: !!manual,
       summary: details ? (details.wikipedia_summary || '') : '',
       summaryLang: details ? details.summaryLang : null,
       thumb: pendingDisplayUrl,
@@ -3395,6 +3463,7 @@ var qrcode = function() {
     document.getElementById('scan-default').style.display = state==='default' ? '' : 'none';
     document.getElementById('scan-loading').style.display = state==='loading' ? '' : 'none';
     document.getElementById('scan-choices').style.display = state==='choices' ? '' : 'none';
+    document.getElementById('scan-manual').style.display = state==='manual' ? '' : 'none';
     document.getElementById('scan-result').style.display = state==='result' ? '' : 'none';
     document.getElementById('scan-error').style.display = state==='error' ? '' : 'none';
   }
@@ -3420,7 +3489,7 @@ var qrcode = function() {
             <span class="tag-pill"><span class="icon">${iconSvg(data.iconic)}</span>${labelFor(data.iconic)}</span>
             <h3>${escapeHtml(data.commonName)}</h3>
             <p class="sci-name">${escapeHtml(data.name)}</p>
-            <p class="confidence">Confiance : ${scorePercent(data.score)}%</p>
+            <p class="confidence">${data.manual ? 'Confirmé manuellement' : `Confiance : ${scorePercent(data.score)}%`}</p>
             ${data.place ? `<p class="place-row"><span class="icon">${ICONS_SVG.pin}</span>${escapeHtml(data.place)}</p>` : ''}
             <p class="summary">${escapeHtml(data.summary || "Pas de description disponible pour cette espèce.")}${data.summary ? summaryNote(data.summaryLang) : ''}</p>
             ${warningBannerHtml()}
