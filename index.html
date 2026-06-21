@@ -115,6 +115,11 @@
   .result-card{background:var(--surface);border-radius:var(--radius-lg);overflow:hidden;
     box-shadow:var(--shadow);margin-top:6px;}
   .result-photo{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#E5E5EA;}
+  .compare-photos{display:flex;}
+  .compare-photos > div{flex:1;position:relative;aspect-ratio:1/1;overflow:hidden;background:#E5E5EA;}
+  .compare-photos img{width:100%;height:100%;object-fit:cover;display:block;}
+  .compare-photos .compare-label{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;font-weight:600;padding:3px 7px;border-radius:8px;}
+  .photo-credit{font-size:10.5px;color:var(--label-2);padding:6px 18px 0;margin:0;text-align:right;}
   .result-body{padding:18px 18px 20px;}
   .tag-pill{display:inline-flex;align-items:center;gap:5px;background:var(--accent-soft);
     color:var(--accent);font-weight:700;font-size:12px;padding:5px 11px 5px 8px;border-radius:20px;
@@ -2974,7 +2979,13 @@ var qrcode = function() {
       <button class="modal-close" id="modalCloseBtn"><span class="icon">${ICONS_SVG.close}</span></button>
       <div class="modal-inner">
         <div class="result-card">
-          ${e.thumb ? `<img class="result-photo" src="${e.thumb}" alt="">` : ''}
+          ${e.refPhoto ? `
+          <div class="compare-photos">
+            <div><img src="${e.thumb}" alt=""><span class="compare-label">Ta photo</span></div>
+            <div><img src="${e.refPhoto}" alt=""><span class="compare-label">Référence</span></div>
+          </div>
+          ${e.refPhotoAttribution ? `<p class="photo-credit">${escapeHtml(e.refPhotoAttribution)}</p>` : ''}
+          ` : (e.thumb ? `<img class="result-photo" src="${e.thumb}" alt="">` : '')}
           <div class="result-body">
             <span class="tag-pill"><span class="icon">${iconSvg(e.iconic)}</span>${labelFor(e.iconic)} · ${e.dateLabel}</span>
             <h3>${escapeHtml(e.commonName || e.name)}</h3>
@@ -3317,6 +3328,9 @@ var qrcode = function() {
     const taxon = result.taxon;
     const details = await fetchTaxonDetails(taxon.id);
     const placeInfo = await pendingPlacePromise;
+    const refPhoto = taxon.default_photo
+      ? (taxon.default_photo.medium_url || taxon.default_photo.square_url || null)
+      : null;
     const data = {
       id: 'e_' + Date.now(),
       taxonId: taxon.id,
@@ -3327,6 +3341,8 @@ var qrcode = function() {
       summary: details ? (details.wikipedia_summary || '') : '',
       summaryLang: details ? details.summaryLang : null,
       thumb: pendingDisplayUrl,
+      refPhoto: refPhoto,
+      refPhotoAttribution: taxon.default_photo ? (taxon.default_photo.attribution || null) : null,
       place: placeInfo ? placeInfo.label : null,
       country: placeInfo ? placeInfo.country : null,
       locality: placeInfo ? placeInfo.locality : null,
@@ -3354,7 +3370,13 @@ var qrcode = function() {
       const showBack = !!window.__hadChoices;
       resultEl.innerHTML = `
         <div class="result-card">
-          <img class="result-photo" src="${data.thumb}" alt="">
+          ${data.refPhoto ? `
+          <div class="compare-photos">
+            <div><img src="${data.thumb}" alt=""><span class="compare-label">Ta photo</span></div>
+            <div><img src="${data.refPhoto}" alt=""><span class="compare-label">Référence</span></div>
+          </div>
+          ${data.refPhotoAttribution ? `<p class="photo-credit">${escapeHtml(data.refPhotoAttribution)}</p>` : ''}
+          ` : `<img class="result-photo" src="${data.thumb}" alt="">`}
           <div class="result-body">
             <span class="tag-pill"><span class="icon">${iconSvg(data.iconic)}</span>${labelFor(data.iconic)}</span>
             <h3>${escapeHtml(data.commonName)}</h3>
