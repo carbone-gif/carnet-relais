@@ -353,6 +353,7 @@
           <span class="slider"></span>
         </label>
       </div>
+      <p id="geoStatus" style="font-size:13px;color:var(--label-2);margin:10px 0 0;line-height:1.5;"></p>
     </div>
 
     <div class="section-label">Comment obtenir le jeton</div>
@@ -2797,7 +2798,7 @@ var qrcode = function() {
     TOKEN = await getStored('inat-token', null);
     ENTRIES = await getStored('carnet-entries', [], true);
     if(!Array.isArray(ENTRIES)) ENTRIES = [];
-    GEO_ENABLED = (await getStored('geo-enabled', false)) === true;
+    GEO_ENABLED = (await getStored('geo-enabled', true)) === true;
   }
 
   // ---------- Settings ----------
@@ -2809,6 +2810,7 @@ var qrcode = function() {
       : '<span class="status-pill status-missing">Aucun jeton</span>';
 
     document.getElementById('geoToggle').checked = GEO_ENABLED;
+    if(GEO_ENABLED){ testGeo(); } else { setGeoStatus(''); }
     renderShareLink();
   }
 
@@ -2849,12 +2851,50 @@ var qrcode = function() {
     renderSettings();
     toast(TOKEN ? 'Jeton enregistré' : 'Jeton effacé');
   });
+  async function resolvePlaceFromCoords(latitude, longitude){
+    try{
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=fr`);
+      if(!res.ok) return null;
+      const json = await res.json();
+      const addr = json.address || {};
+      const locality = addr.city || addr.town || addr.village || addr.county || addr.state || null;
+      const country = addr.country || null;
+      if(!locality && !country) return null;
+      return {
+        country,
+        locality,
+        label: locality ? (country ? `${locality}, ${country}` : locality) : country
+      };
+    }catch(e){ return null; }
+  }
+
+  function setGeoStatus(text){
+    const el = document.getElementById('geoStatus');
+    if(el) el.textContent = text;
+  }
+
+  function testGeo(){
+    if(!navigator.geolocation){
+      setGeoStatus("Ton navigateur ne propose pas la géolocalisation.");
+      return;
+    }
+    setGeoStatus("Localisation en cours...");
+    navigator.geolocation.getCurrentPosition(async (pos)=>{
+      const place = await resolvePlaceFromCoords(pos.coords.latitude, pos.coords.longitude);
+      setGeoStatus(place ? `Position détectée : ${place.label}` : "Position détectée, mais impossible d'identifier le lieu (réessaie plus tard).");
+    }, (err)=>{
+      if(err && err.code === 1){
+        setGeoStatus("Autorisation refusée. Active la localisation pour ce site dans les réglages de ton navigateur, puis réessaie.");
+      } else {
+        setGeoStatus("Impossible d'obtenir ta position pour le moment.");
+      }
+    }, { timeout:8000 });
+  }
+
   document.getElementById('geoToggle').addEventListener('change', async (ev)=>{
     GEO_ENABLED = ev.target.checked;
     await setStored('geo-enabled', GEO_ENABLED);
-    if(GEO_ENABLED && navigator.geolocation){
-      navigator.geolocation.getCurrentPosition(()=>{}, ()=>{}, {timeout:5000});
-    }
+    if(GEO_ENABLED){ testGeo(); } else { setGeoStatus(''); }
   });
 
   // ---------- Geolocation -> place info ----------
@@ -2862,21 +2902,8 @@ var qrcode = function() {
     return new Promise((resolve)=>{
       if(!GEO_ENABLED || !navigator.geolocation){ resolve(null); return; }
       navigator.geolocation.getCurrentPosition(async (pos)=>{
-        try{
-          const { latitude, longitude } = pos.coords;
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=fr`);
-          if(!res.ok){ resolve(null); return; }
-          const json = await res.json();
-          const addr = json.address || {};
-          const locality = addr.city || addr.town || addr.village || addr.county || addr.state || null;
-          const country = addr.country || null;
-          if(!locality && !country){ resolve(null); return; }
-          resolve({
-            country,
-            locality,
-            label: locality ? (country ? `${locality}, ${country}` : locality) : country
-          });
-        }catch(e){ resolve(null); }
+        const place = await resolvePlaceFromCoords(pos.coords.latitude, pos.coords.longitude);
+        resolve(place);
       }, ()=>resolve(null), { timeout:6000, maximumAge:300000 });
     });
   }
@@ -3199,6 +3226,16 @@ var qrcode = function() {
     }catch(e){ return null; }
   }
 
+  async function fetchWikipediaSummary(lang, title){
+    try{
+      const res = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+      if(!res.ok) return null;
+      const json = await res.json();
+      if(json.type === 'disambiguation') return null;
+      return json.extract || null;
+    }catch(e){ return null; }
+  }
+
   async function fetchTaxonDetails(taxonId){
     try{
       const res = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}?locale=fr`);
@@ -3206,22 +3243,37 @@ var qrcode = function() {
       const json = await res.json();
       const result = (json.results && json.results[0]) || null;
       if(!result) return null;
+      const sciName = result.name;
+
+      // 1. Résumé français déjà fourni par iNaturalist (curé par la communauté).
       if(result.wikipedia_summary) return { ...result, summaryLang: 'fr' };
-      // Pas de résumé en français disponible pour cette espèce : on retente en anglais, puis on traduit.
+
+      // 2. Wikipédia français en direct (parfois plus à jour que la liaison iNaturalist).
+      const fromFrWiki = sciName ? await fetchWikipediaSummary('fr', sciName) : null;
+      if(fromFrWiki) return { ...result, wikipedia_summary: fromFrWiki, summaryLang: 'fr' };
+
+      // 3. Résumé anglais via iNaturalist, traduit automatiquement.
+      let englishSummary = null;
       try{
         const resEn = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
         if(resEn.ok){
           const jsonEn = await resEn.json();
           const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
-          if(resultEn && resultEn.wikipedia_summary){
-            const translated = await translateToFr(resultEn.wikipedia_summary);
-            if(translated){
-              return { ...result, wikipedia_summary: translated, summaryLang: 'fr-auto' };
-            }
-            return { ...result, wikipedia_summary: resultEn.wikipedia_summary, summaryLang: 'en' };
-          }
+          if(resultEn && resultEn.wikipedia_summary) englishSummary = resultEn.wikipedia_summary;
         }
-      }catch(e){ /* tant pis, on garde le résultat FR sans résumé */ }
+      }catch(e){ /* on continue les autres pistes */ }
+
+      // 4. Wikipédia anglais en direct, si même iNaturalist n'a rien.
+      if(!englishSummary && sciName){
+        englishSummary = await fetchWikipediaSummary('en', sciName);
+      }
+
+      if(englishSummary){
+        const translated = await translateToFr(englishSummary);
+        if(translated) return { ...result, wikipedia_summary: translated, summaryLang: 'fr-auto' };
+        return { ...result, wikipedia_summary: englishSummary, summaryLang: 'en' };
+      }
+
       return { ...result, summaryLang: 'fr' };
     }catch(e){ return null; }
   }
