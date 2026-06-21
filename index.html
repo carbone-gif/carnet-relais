@@ -3267,13 +3267,16 @@ var qrcode = function() {
 
   async function fetchWikipediaSummary(lang, title){
     try{
-      const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+      const url = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exsentences=6&explaintext=true&redirects=1&titles=${encodeURIComponent(title)}&origin=*`;
       const res = await fetch(url);
       console.log(`[desc] wikipedia ${lang} "${title}" ->`, res.status);
       if(!res.ok) return null;
       const json = await res.json();
-      if(json.type === 'disambiguation'){ console.log('[desc] wikipedia', lang, 'page de désambiguïsation'); return null; }
-      return json.extract || null;
+      const pages = json.query && json.query.pages;
+      if(!pages) return null;
+      const page = Object.values(pages)[0];
+      if(!page || page.missing !== undefined) return null;
+      return page.extract || null;
     }catch(e){ console.warn(`[desc] wikipedia ${lang} exception`, e); return null; }
   }
 
@@ -3289,30 +3292,29 @@ var qrcode = function() {
       const frUseful = isUsefulSummary(result.wikipedia_summary, sciName);
       console.log('[desc] taxon', taxonId, 'nom scientifique :', sciName, '| résumé FR iNat utile :', frUseful);
 
-      // 1. Résumé français déjà fourni par iNaturalist (curé par la communauté).
-      if(frUseful) return { ...result, wikipedia_summary: stripTags(result.wikipedia_summary), summaryLang: 'fr' };
-
-      // 2. Wikipédia français en direct (parfois plus à jour que la liaison iNaturalist).
+      // 1. Wikipédia français en direct, plusieurs phrases (plus riche que le cache iNaturalist).
       const fromFrWiki = sciName ? await fetchWikipediaSummary('fr', sciName) : null;
       if(isUsefulSummary(fromFrWiki, sciName)) return { ...result, wikipedia_summary: stripTags(fromFrWiki), summaryLang: 'fr' };
 
-      // 3. Résumé anglais via iNaturalist, traduit automatiquement.
-      let englishSummary = null;
-      try{
-        const resEn = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
-        console.log('[desc] iNaturalist taxa EN ->', resEn.status);
-        if(resEn.ok){
-          const jsonEn = await resEn.json();
-          const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
-          if(isUsefulSummary(resultEn && resultEn.wikipedia_summary, sciName)) englishSummary = resultEn.wikipedia_summary;
-          console.log('[desc] résumé EN iNat utile :', !!englishSummary);
-        }
-      }catch(e){ console.warn('[desc] iNaturalist taxa EN exception', e); }
+      // 2. À défaut, le résumé français déjà fourni par iNaturalist.
+      if(frUseful) return { ...result, wikipedia_summary: stripTags(result.wikipedia_summary), summaryLang: 'fr' };
 
-      // 4. Wikipédia anglais en direct, si même iNaturalist n'a rien.
-      if(!englishSummary && sciName){
-        const fromEnWiki = await fetchWikipediaSummary('en', sciName);
-        if(isUsefulSummary(fromEnWiki, sciName)) englishSummary = fromEnWiki;
+      // 3. Wikipédia anglais en direct, plusieurs phrases, traduit automatiquement.
+      let englishSummary = sciName ? await fetchWikipediaSummary('en', sciName) : null;
+      if(!isUsefulSummary(englishSummary, sciName)) englishSummary = null;
+
+      // 4. À défaut, le résumé anglais du cache iNaturalist.
+      if(!englishSummary){
+        try{
+          const resEn = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
+          console.log('[desc] iNaturalist taxa EN ->', resEn.status);
+          if(resEn.ok){
+            const jsonEn = await resEn.json();
+            const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
+            if(isUsefulSummary(resultEn && resultEn.wikipedia_summary, sciName)) englishSummary = resultEn.wikipedia_summary;
+            console.log('[desc] résumé EN iNat utile :', !!englishSummary);
+          }
+        }catch(e){ console.warn('[desc] iNaturalist taxa EN exception', e); }
       }
 
       if(englishSummary){
