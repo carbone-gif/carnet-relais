@@ -3230,31 +3230,37 @@ var qrcode = function() {
     try{
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fr&dt=t&q=${encodeURIComponent(text)}`;
       const res = await fetch(url);
-      if(!res.ok) return null;
+      if(!res.ok){ console.warn('[desc] traduction HTTP', res.status); return null; }
       const data = await res.json();
-      if(!data || !data[0]) return null;
-      return data[0].map(seg=>seg[0]).join('');
-    }catch(e){ return null; }
+      if(!data || !data[0]){ console.warn('[desc] traduction réponse vide', data); return null; }
+      const out = data[0].map(seg=>seg[0]).join('');
+      console.log('[desc] traduction OK, longueur', out.length);
+      return out;
+    }catch(e){ console.warn('[desc] traduction exception', e); return null; }
   }
 
   async function fetchWikipediaSummary(lang, title){
     try{
-      const res = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+      const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+      const res = await fetch(url);
+      console.log(`[desc] wikipedia ${lang} "${title}" ->`, res.status);
       if(!res.ok) return null;
       const json = await res.json();
-      if(json.type === 'disambiguation') return null;
+      if(json.type === 'disambiguation'){ console.log('[desc] wikipedia', lang, 'page de désambiguïsation'); return null; }
       return json.extract || null;
-    }catch(e){ return null; }
+    }catch(e){ console.warn(`[desc] wikipedia ${lang} exception`, e); return null; }
   }
 
   async function fetchTaxonDetails(taxonId){
     try{
       const res = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}?locale=fr`);
+      console.log('[desc] iNaturalist taxa FR ->', res.status);
       if(!res.ok) return null;
       const json = await res.json();
       const result = (json.results && json.results[0]) || null;
       if(!result) return null;
       const sciName = result.name;
+      console.log('[desc] taxon', taxonId, 'nom scientifique :', sciName, '| résumé FR iNat présent :', !!result.wikipedia_summary);
 
       // 1. Résumé français déjà fourni par iNaturalist (curé par la communauté).
       if(result.wikipedia_summary) return { ...result, summaryLang: 'fr' };
@@ -3267,12 +3273,14 @@ var qrcode = function() {
       let englishSummary = null;
       try{
         const resEn = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
+        console.log('[desc] iNaturalist taxa EN ->', resEn.status);
         if(resEn.ok){
           const jsonEn = await resEn.json();
           const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
           if(resultEn && resultEn.wikipedia_summary) englishSummary = resultEn.wikipedia_summary;
+          console.log('[desc] résumé EN iNat présent :', !!englishSummary);
         }
-      }catch(e){ /* on continue les autres pistes */ }
+      }catch(e){ console.warn('[desc] iNaturalist taxa EN exception', e); }
 
       // 4. Wikipédia anglais en direct, si même iNaturalist n'a rien.
       if(!englishSummary && sciName){
@@ -3285,8 +3293,9 @@ var qrcode = function() {
         return { ...result, wikipedia_summary: englishSummary, summaryLang: 'en' };
       }
 
+      console.warn('[desc] aucune description trouvée (toutes les pistes ont échoué) pour', sciName);
       return { ...result, summaryLang: 'fr' };
-    }catch(e){ return null; }
+    }catch(e){ console.warn('[desc] fetchTaxonDetails exception globale', e); return null; }
   }
 
   function showChoices(results){
