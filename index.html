@@ -123,6 +123,7 @@
   .result-body h3{font-size:21px;font-weight:700;letter-spacing:-0.3px;margin:0 0 2px;}
   .result-body .sci-name{font-style:italic;font-size:14px;color:var(--label-2);margin:0 0 12px;}
   .result-body .summary{font-size:14.5px;line-height:1.55;color:var(--label);margin:0 0 6px;}
+  .lang-note{font-size:12px;color:var(--label-2);font-style:italic;}
   .confidence{font-size:12.5px;color:var(--label-3);margin:0 0 4px;}
   .place-row{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--label-2);margin:0 0 14px;}
   .place-row .icon{width:14px;height:14px;color:var(--label-3);}
@@ -138,6 +139,8 @@
     cursor:pointer;font-family:inherit;}
   .btn-primary{background:var(--accent);color:#fff;}
   .btn-secondary{background:var(--bg);color:var(--label);}
+  .btn-danger{background:#FFEAEA;color:#D7263D;}
+  .link-btn{display:block;width:100%;background:none;border:none;color:var(--accent);font-weight:600;font-size:13.5px;padding:6px 0 14px;text-align:center;}
   .btn:active{transform:scale(.97);}
   .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .btn-full{width:100%;}
@@ -2719,6 +2722,12 @@ var qrcode = function() {
     if(iconic==='Insecta' || iconic==='Arachnida') return 'insectes';
     return 'animaux';
   }
+  function summaryNote(lang){
+    if(lang==='fr-auto') return '<span class="lang-note"> (traduit automatiquement de l\'anglais)</span>';
+    if(lang==='en') return '<span class="lang-note"> (description en anglais — traduction indisponible)</span>';
+    return '';
+  }
+
   function scorePercent(score){
     if(score==null) return 0;
     return Math.round(score > 1 ? score : score*100);
@@ -2944,15 +2953,32 @@ var qrcode = function() {
             <h3>${escapeHtml(e.commonName || e.name)}</h3>
             <p class="sci-name">${escapeHtml(e.name)}</p>
             ${e.place ? `<p class="place-row"><span class="icon">${ICONS_SVG.pin}</span>${escapeHtml(e.place)}</p>` : ''}
-            <p class="summary">${escapeHtml(e.summary || "Pas de description disponible pour cette espèce.")}</p>
+            <p class="summary">${escapeHtml(e.summary || "Pas de description disponible pour cette espèce.")}${e.summary ? summaryNote(e.summaryLang) : ''}</p>
             ${warningBannerHtml()}
+            <div class="btn-row">
+              <button class="btn btn-danger" id="deleteEntryBtn">Supprimer</button>
+            </div>
           </div>
         </div>
       </div>`;
     document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+    document.getElementById('deleteEntryBtn').addEventListener('click', ()=> confirmDeleteEntry(e.id));
     document.getElementById('modalBackdrop').classList.add('active');
   }
   function closeModal(){ document.getElementById('modalBackdrop').classList.remove('active'); }
+
+  function confirmDeleteEntry(id){
+    if(!window.confirm('Supprimer cette fiche du carnet ? Cette action est irréversible.')) return;
+    deleteEntry(id);
+  }
+
+  async function deleteEntry(id){
+    ENTRIES = ENTRIES.filter(e=>e.id !== id);
+    await setStored('carnet-entries', ENTRIES, true);
+    closeModal();
+    renderCarnet();
+    toast('Fiche supprimée');
+  }
 
   // ---------- Duplicate detection ----------
   async function commitAddAsync(data){
@@ -3110,9 +3136,14 @@ var qrcode = function() {
         showScanState('error', { message: "Aucune correspondance trouvée. Réessaie avec une photo plus nette, en te rapprochant du sujet." });
         return;
       }
-      if(results.length === 1){
+      const topPct = scorePercent(results[0].combined_score);
+      const secondPct = results.length > 1 ? scorePercent(results[1].combined_score) : 0;
+      const confident = results.length === 1 || (topPct >= 60 && (topPct - secondPct) >= 20);
+      if(confident){
+        window.__hadChoices = false;
         await finalizeChoice(results[0]);
       } else {
+        window.__hadChoices = true;
         showChoices(results.slice(0,3));
       }
     }catch(err){
@@ -3155,12 +3186,43 @@ var qrcode = function() {
     return json.results || [];
   }
 
+  // Traduction gratuite, sans clé (endpoint non-officiel utilisé par de nombreux petits projets,
+  // peut échouer ou être limité en cas de forte utilisation — dégradation silencieuse si besoin).
+  async function translateToFr(text){
+    try{
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fr&dt=t&q=${encodeURIComponent(text)}`;
+      const res = await fetch(url);
+      if(!res.ok) return null;
+      const data = await res.json();
+      if(!data || !data[0]) return null;
+      return data[0].map(seg=>seg[0]).join('');
+    }catch(e){ return null; }
+  }
+
   async function fetchTaxonDetails(taxonId){
     try{
       const res = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}?locale=fr`);
       if(!res.ok) return null;
       const json = await res.json();
-      return (json.results && json.results[0]) || null;
+      const result = (json.results && json.results[0]) || null;
+      if(!result) return null;
+      if(result.wikipedia_summary) return { ...result, summaryLang: 'fr' };
+      // Pas de résumé en français disponible pour cette espèce : on retente en anglais, puis on traduit.
+      try{
+        const resEn = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
+        if(resEn.ok){
+          const jsonEn = await resEn.json();
+          const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
+          if(resultEn && resultEn.wikipedia_summary){
+            const translated = await translateToFr(resultEn.wikipedia_summary);
+            if(translated){
+              return { ...result, wikipedia_summary: translated, summaryLang: 'fr-auto' };
+            }
+            return { ...result, wikipedia_summary: resultEn.wikipedia_summary, summaryLang: 'en' };
+          }
+        }
+      }catch(e){ /* tant pis, on garde le résultat FR sans résumé */ }
+      return { ...result, summaryLang: 'fr' };
     }catch(e){ return null; }
   }
 
@@ -3211,6 +3273,7 @@ var qrcode = function() {
       iconic: taxon.iconic_taxon_name,
       score: result.combined_score,
       summary: details ? (details.wikipedia_summary || '') : '',
+      summaryLang: details ? details.summaryLang : null,
       thumb: pendingDisplayUrl,
       place: placeInfo ? placeInfo.label : null,
       country: placeInfo ? placeInfo.country : null,
@@ -3236,6 +3299,7 @@ var qrcode = function() {
 
     if(state==='result'){
       window.__lastResult = data;
+      const showBack = !!window.__hadChoices;
       resultEl.innerHTML = `
         <div class="result-card">
           <img class="result-photo" src="${data.thumb}" alt="">
@@ -3245,8 +3309,9 @@ var qrcode = function() {
             <p class="sci-name">${escapeHtml(data.name)}</p>
             <p class="confidence">Confiance : ${scorePercent(data.score)}%</p>
             ${data.place ? `<p class="place-row"><span class="icon">${ICONS_SVG.pin}</span>${escapeHtml(data.place)}</p>` : ''}
-            <p class="summary">${escapeHtml(data.summary || "Pas de description disponible pour cette espèce.")}</p>
+            <p class="summary">${escapeHtml(data.summary || "Pas de description disponible pour cette espèce.")}${data.summary ? summaryNote(data.summaryLang) : ''}</p>
             ${warningBannerHtml()}
+            ${showBack ? `<button class="link-btn" id="backToChoicesBtn">← Revoir les autres propositions</button>` : ''}
             <div class="btn-row">
               <button class="btn btn-secondary" id="retakeBtn">Nouvelle photo</button>
               <button class="btn btn-primary" id="addToCarnetBtn">Ajouter au carnet</button>
@@ -3257,6 +3322,9 @@ var qrcode = function() {
       document.getElementById('addToCarnetBtn').addEventListener('click', ()=>{
         evaluateAndAdd(window.__lastResult);
       });
+      if(showBack){
+        document.getElementById('backToChoicesBtn').addEventListener('click', ()=> setScanPanel('choices'));
+      }
     }
     if(state==='error'){
       errorEl.innerHTML = `
