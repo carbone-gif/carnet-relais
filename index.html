@@ -3030,6 +3030,7 @@ var qrcode = function() {
   }
 
   function evaluateAndAdd(data){
+    if(data.custom){ commitAddAsync(data); return; }
     const sameSpecies = ENTRIES.filter(e=>e.taxonId === data.taxonId);
     if(sameSpecies.length === 0){
       commitAddAsync(data);
@@ -3391,6 +3392,32 @@ var qrcode = function() {
         <input type="text" id="manualSearchInput" class="manual-search-input" placeholder="Ex : yucca, mouton, coccinelle...">
       </div>
       <div id="manualResults"></div>
+
+      <div class="section-label" style="margin-top:22px;">Toujours rien ?</div>
+      <div class="grouped-card" style="padding:14px;">
+        <p style="font-size:13px;color:var(--label-2);line-height:1.5;margin:0 0 12px;">Demande à une IA d'identifier ta photo (en la lui envoyant dans son appli), puis colle sa réponse ci-dessous pour créer la fiche toi-même.</p>
+        <div class="btn-row">
+          <a class="btn btn-secondary" href="https://claude.ai" target="_blank" rel="noopener" style="text-decoration:none;text-align:center;">Claude</a>
+          <a class="btn btn-secondary" href="https://chatgpt.com" target="_blank" rel="noopener" style="text-decoration:none;text-align:center;">ChatGPT</a>
+          <a class="btn btn-secondary" href="https://chat.mistral.ai" target="_blank" rel="noopener" style="text-decoration:none;text-align:center;">Mistral</a>
+        </div>
+      </div>
+      <div class="grouped-card" style="padding:14px;margin-top:10px;">
+        <div class="section-label" style="margin:0 0 8px;">Nom de l'espèce</div>
+        <input type="text" id="customName" class="manual-search-input" style="padding:8px 4px;" placeholder="Ex : Tortue d'Hermann">
+        <div class="section-label" style="margin:14px 0 8px;">Catégorie</div>
+        <div class="btn-row" id="customCategoryRow">
+          <button type="button" class="btn btn-secondary cat-btn" data-cat="Plantae">Plante</button>
+          <button type="button" class="btn btn-secondary cat-btn" data-cat="Animalia">Animal</button>
+          <button type="button" class="btn btn-secondary cat-btn" data-cat="Insecta">Insecte</button>
+        </div>
+        <div class="section-label" style="margin:14px 0 8px;">Description (colle la réponse de l'IA)</div>
+        <textarea id="customSummary" class="token-input" style="min-height:90px;padding:10px;"></textarea>
+        <div class="section-label" style="margin:14px 0 8px;">Lieu</div>
+        <input type="text" id="customPlace" class="manual-search-input" style="padding:8px 4px;" placeholder="Ex : Var, France">
+        <button class="btn btn-primary btn-full" id="customCreateBtn" style="margin-top:14px;">Créer la fiche</button>
+      </div>
+
       <button class="link-btn" id="manualCancelBtn">Annuler — refaire une photo</button>
     `;
     setScanPanel('manual');
@@ -3410,6 +3437,60 @@ var qrcode = function() {
       }, 400);
     });
     input.focus();
+
+    // Catégorie : sélection visuelle simple
+    window.__customCategory = null;
+    wrap.querySelectorAll('.cat-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        wrap.querySelectorAll('.cat-btn').forEach(b=> b.classList.remove('btn-primary'));
+        wrap.querySelectorAll('.cat-btn').forEach(b=> b.classList.add('btn-secondary'));
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        window.__customCategory = btn.dataset.cat;
+      });
+    });
+
+    // Pré-remplir le lieu si la géolocalisation a déjà résolu une position.
+    if(pendingPlacePromise){
+      pendingPlacePromise.then(place=>{
+        if(place && place.label){
+          const placeInput = document.getElementById('customPlace');
+          if(placeInput && !placeInput.value) placeInput.value = place.label;
+        }
+      });
+    }
+
+    document.getElementById('customCreateBtn').addEventListener('click', createCustomEntry);
+  }
+
+  async function createCustomEntry(){
+    const name = document.getElementById('customName').value.trim();
+    const cat = window.__customCategory;
+    if(!name){ toast("Donne un nom à l'espèce"); return; }
+    if(!cat){ toast('Choisis une catégorie'); return; }
+    const summary = document.getElementById('customSummary').value.trim();
+    const place = document.getElementById('customPlace').value.trim();
+    const data = {
+      id: 'e_' + Date.now(),
+      taxonId: null,
+      name: name,
+      commonName: name,
+      iconic: cat,
+      score: null,
+      manual: true,
+      custom: true,
+      summary: summary,
+      summaryLang: null,
+      thumb: pendingDisplayUrl,
+      refPhoto: null,
+      refPhotoAttribution: null,
+      place: place || null,
+      country: null,
+      locality: null,
+      dateLabel: new Date().toLocaleDateString('fr-FR', {day:'2-digit', month:'short'}),
+      addedAt: Date.now()
+    };
+    showScanState('result', data);
   }
 
   function renderManualResults(taxa){
@@ -3500,7 +3581,7 @@ var qrcode = function() {
             <span class="tag-pill"><span class="icon">${iconSvg(data.iconic)}</span>${labelFor(data.iconic)}</span>
             <h3>${escapeHtml(data.commonName)}</h3>
             <p class="sci-name">${escapeHtml(data.name)}</p>
-            <p class="confidence">${data.manual ? 'Confirmé manuellement' : `Confiance : ${scorePercent(data.score)}%`}</p>
+            <p class="confidence">${data.custom ? "Identifié avec l'aide d'une IA" : (data.manual ? 'Confirmé manuellement' : `Confiance : ${scorePercent(data.score)}%`)}</p>
             ${data.place ? `<p class="place-row"><span class="icon">${ICONS_SVG.pin}</span>${escapeHtml(data.place)}</p>` : ''}
             <p class="summary">${escapeHtml(data.summary || "Pas de description disponible pour cette espèce.")}${data.summary ? summaryNote(data.summaryLang) : ''}</p>
             ${warningBannerHtml()}
