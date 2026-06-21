@@ -3185,7 +3185,7 @@ var qrcode = function() {
         await finalizeChoice(results[0]);
       } else {
         window.__hadChoices = true;
-        showChoices(results.slice(0,3));
+        showChoices(results.slice(0,6));
       }
     }catch(err){
       console.error(err);
@@ -3378,7 +3378,7 @@ var qrcode = function() {
       <button class="link-btn" id="manualBackBtn">← Revenir aux propositions</button>
       <div class="choices-head">
         <h2>Cherche le nom toi-même</h2>
-        <p>Tape un nom (français ou scientifique), même approximatif.</p>
+        <p>Tape un nom, même approximatif ou général (ex : "plante grasse", "oiseau noir").</p>
       </div>
       <div class="grouped-card" style="padding:10px;">
         <input type="text" id="manualSearchInput" class="manual-search-input" placeholder="Ex : yucca, mouton, coccinelle...">
