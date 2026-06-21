@@ -3355,11 +3355,13 @@ var qrcode = function() {
         }).join('')}
       </div>
       <button class="choices-none" id="choicesNoneBtn">Aucune ne correspond</button>
+      <button class="link-btn" id="choicesCancelBtn">Annuler — refaire une photo</button>
     `;
     wrap.querySelectorAll('.choice-row').forEach(row=>{
       row.addEventListener('click', ()=> finalizeChoice(results[parseInt(row.dataset.idx,10)]));
     });
     document.getElementById('choicesNoneBtn').addEventListener('click', showManualSearch);
+    document.getElementById('choicesCancelBtn').addEventListener('click', ()=> showScanState('default'));
     setScanPanel('choices');
   }
 
@@ -3384,9 +3386,11 @@ var qrcode = function() {
         <input type="text" id="manualSearchInput" class="manual-search-input" placeholder="Ex : yucca, mouton, coccinelle...">
       </div>
       <div id="manualResults"></div>
+      <button class="link-btn" id="manualCancelBtn">Annuler — refaire une photo</button>
     `;
     setScanPanel('manual');
     document.getElementById('manualBackBtn').addEventListener('click', ()=> setScanPanel('choices'));
+    document.getElementById('manualCancelBtn').addEventListener('click', ()=> showScanState('default'));
     const input = document.getElementById('manualSearchInput');
     let debounceTimer = null;
     input.addEventListener('input', ()=>{
