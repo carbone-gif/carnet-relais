@@ -3163,8 +3163,8 @@ var qrcode = function() {
   async function handlePhoto(file){
     showScanState('loading');
     try{
-      const squareCanvas = await resizeImage(file, 299, true);
-      const blob = await canvasToBlob(squareCanvas, 0.85);
+      const idCanvas = await resizeImage(file, 299, false);
+      const blob = await canvasToBlob(idCanvas, 0.85);
       const displayCanvas = await resizeImage(file, 500, true);
       pendingDisplayUrl = canvasToDataUrl(displayCanvas, 0.7);
       pendingPlacePromise = getPlaceInfo();
