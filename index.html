@@ -3226,6 +3226,20 @@ var qrcode = function() {
 
   // Traduction gratuite, sans clé (endpoint non-officiel utilisé par de nombreux petits projets,
   // peut échouer ou être limité en cas de forte utilisation — dégradation silencieuse si besoin).
+  function stripTags(str){
+    if(!str) return '';
+    return str.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Rejette les "résumés" qui ne sont en fait que le nom scientifique recopié
+  // (ça arrive côté iNaturalist quand aucune vraie traduction n'existe).
+  function isUsefulSummary(text, sciName){
+    const clean = stripTags(text);
+    if(!clean || clean.length < 40) return false;
+    if(sciName && clean.toLowerCase() === sciName.toLowerCase()) return false;
+    return true;
+  }
+
   async function translateToFr(text){
     try{
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fr&dt=t&q=${encodeURIComponent(text)}`;
@@ -3260,14 +3274,15 @@ var qrcode = function() {
       const result = (json.results && json.results[0]) || null;
       if(!result) return null;
       const sciName = result.name;
-      console.log('[desc] taxon', taxonId, 'nom scientifique :', sciName, '| résumé FR iNat présent :', !!result.wikipedia_summary);
+      const frUseful = isUsefulSummary(result.wikipedia_summary, sciName);
+      console.log('[desc] taxon', taxonId, 'nom scientifique :', sciName, '| résumé FR iNat utile :', frUseful);
 
       // 1. Résumé français déjà fourni par iNaturalist (curé par la communauté).
-      if(result.wikipedia_summary) return { ...result, summaryLang: 'fr' };
+      if(frUseful) return { ...result, wikipedia_summary: stripTags(result.wikipedia_summary), summaryLang: 'fr' };
 
       // 2. Wikipédia français en direct (parfois plus à jour que la liaison iNaturalist).
       const fromFrWiki = sciName ? await fetchWikipediaSummary('fr', sciName) : null;
-      if(fromFrWiki) return { ...result, wikipedia_summary: fromFrWiki, summaryLang: 'fr' };
+      if(isUsefulSummary(fromFrWiki, sciName)) return { ...result, wikipedia_summary: stripTags(fromFrWiki), summaryLang: 'fr' };
 
       // 3. Résumé anglais via iNaturalist, traduit automatiquement.
       let englishSummary = null;
@@ -3277,23 +3292,24 @@ var qrcode = function() {
         if(resEn.ok){
           const jsonEn = await resEn.json();
           const resultEn = (jsonEn.results && jsonEn.results[0]) || null;
-          if(resultEn && resultEn.wikipedia_summary) englishSummary = resultEn.wikipedia_summary;
-          console.log('[desc] résumé EN iNat présent :', !!englishSummary);
+          if(isUsefulSummary(resultEn && resultEn.wikipedia_summary, sciName)) englishSummary = resultEn.wikipedia_summary;
+          console.log('[desc] résumé EN iNat utile :', !!englishSummary);
         }
       }catch(e){ console.warn('[desc] iNaturalist taxa EN exception', e); }
 
       // 4. Wikipédia anglais en direct, si même iNaturalist n'a rien.
       if(!englishSummary && sciName){
-        englishSummary = await fetchWikipediaSummary('en', sciName);
+        const fromEnWiki = await fetchWikipediaSummary('en', sciName);
+        if(isUsefulSummary(fromEnWiki, sciName)) englishSummary = fromEnWiki;
       }
 
       if(englishSummary){
         const translated = await translateToFr(englishSummary);
-        if(translated) return { ...result, wikipedia_summary: translated, summaryLang: 'fr-auto' };
-        return { ...result, wikipedia_summary: englishSummary, summaryLang: 'en' };
+        if(translated) return { ...result, wikipedia_summary: stripTags(translated), summaryLang: 'fr-auto' };
+        return { ...result, wikipedia_summary: stripTags(englishSummary), summaryLang: 'en' };
       }
 
-      console.warn('[desc] aucune description trouvée (toutes les pistes ont échoué) pour', sciName);
+      console.warn('[desc] aucune description utile trouvée pour', sciName);
       return { ...result, summaryLang: 'fr' };
     }catch(e){ console.warn('[desc] fetchTaxonDetails exception globale', e); return null; }
   }
