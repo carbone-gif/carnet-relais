@@ -3279,7 +3279,11 @@ var qrcode = function() {
       if(!pages) return null;
       const page = Object.values(pages)[0];
       if(!page || page.missing !== undefined) return null;
-      return page.extract || null;
+      if(!page.extract) return null;
+      // On coupe avant la première section technique (== Distribution ==, == Taxonomie ==...) :
+      // seul le résumé général en tête d'article nous intéresse ici.
+      const leadOnly = page.extract.split(/\n?==/)[0].trim();
+      return leadOnly || null;
     }catch(e){ console.warn(`[desc] wikipedia ${lang} exception`, e); return null; }
   }
 
@@ -3376,8 +3380,9 @@ var qrcode = function() {
 
   function showManualSearch(){
     const wrap = document.getElementById('scan-manual');
+    const hasChoices = !!window.__hadChoices;
     wrap.innerHTML = `
-      <button class="link-btn" id="manualBackBtn">← Revenir aux propositions</button>
+      ${hasChoices ? `<button class="link-btn" id="manualBackBtn">← Revenir aux propositions</button>` : ''}
       <div class="choices-head">
         <h2>Cherche le nom toi-même</h2>
         <p>Tape un nom, même approximatif ou général (ex : "plante grasse", "oiseau noir").</p>
@@ -3389,7 +3394,9 @@ var qrcode = function() {
       <button class="link-btn" id="manualCancelBtn">Annuler — refaire une photo</button>
     `;
     setScanPanel('manual');
-    document.getElementById('manualBackBtn').addEventListener('click', ()=> setScanPanel('choices'));
+    if(hasChoices){
+      document.getElementById('manualBackBtn').addEventListener('click', ()=> setScanPanel('choices'));
+    }
     document.getElementById('manualCancelBtn').addEventListener('click', ()=> showScanState('default'));
     const input = document.getElementById('manualSearchInput');
     let debounceTimer = null;
@@ -3497,7 +3504,9 @@ var qrcode = function() {
             ${data.place ? `<p class="place-row"><span class="icon">${ICONS_SVG.pin}</span>${escapeHtml(data.place)}</p>` : ''}
             <p class="summary">${escapeHtml(data.summary || "Pas de description disponible pour cette espèce.")}${data.summary ? summaryNote(data.summaryLang) : ''}</p>
             ${warningBannerHtml()}
-            ${showBack ? `<button class="link-btn" id="backToChoicesBtn">← Revoir les autres propositions</button>` : ''}
+            ${showBack
+              ? `<button class="link-btn" id="backToChoicesBtn">← Revoir les autres propositions</button>`
+              : (data.manual ? '' : `<button class="link-btn" id="notRightBtn">Ce n'est pas la bonne espèce ?</button>`)}
             <div class="btn-row">
               <button class="btn btn-secondary" id="retakeBtn">Nouvelle photo</button>
               <button class="btn btn-primary" id="addToCarnetBtn">Ajouter au carnet</button>
@@ -3510,6 +3519,8 @@ var qrcode = function() {
       });
       if(showBack){
         document.getElementById('backToChoicesBtn').addEventListener('click', ()=> setScanPanel('choices'));
+      } else if(!data.manual){
+        document.getElementById('notRightBtn').addEventListener('click', showManualSearch);
       }
     }
     if(state==='error'){
