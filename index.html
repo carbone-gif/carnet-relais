@@ -3231,12 +3231,24 @@ var qrcode = function() {
     return str.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  // Rejette les "résumés" qui ne sont en fait que le nom scientifique recopié
-  // (ça arrive côté iNaturalist quand aucune vraie traduction n'existe).
+  // Textes génériques renvoyés par iNaturalist quand il n'y a pas de vraie description
+  // (invitations à compléter la fiche, etc.) — pas du contenu utile pour un enfant.
+  const STUB_PATTERNS = [
+    /partager vos connaissances/i,
+    /selon les recommandations du projet/i,
+    /you can help improve/i,
+    /share what you know/i,
+    /no (description|summary) (is )?available/i
+  ];
+
+  // Rejette les "résumés" qui ne sont en fait que le nom scientifique recopié,
+  // ou un texte générique d'invitation à contribuer (ça arrive côté iNaturalist
+  // quand aucune vraie traduction/description n'existe pour ce taxon).
   function isUsefulSummary(text, sciName){
     const clean = stripTags(text);
     if(!clean || clean.length < 40) return false;
     if(sciName && clean.toLowerCase() === sciName.toLowerCase()) return false;
+    if(STUB_PATTERNS.some(re => re.test(clean))) return false;
     return true;
   }
 
